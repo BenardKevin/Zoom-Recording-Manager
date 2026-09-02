@@ -1,8 +1,6 @@
 import logging
-from pathlib import Path
 
 from src.config.settings import LOG_DIR
-
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 

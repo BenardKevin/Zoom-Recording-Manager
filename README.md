@@ -86,7 +86,7 @@ support_it-storage-manager/
 ├── src/
 │   │
 │   ├── clients/
-│   │   └── zoom_client.py
+│   │   └── zoom_client.py → appels API Zoom
 │   │
 │   ├── config/
 │   │   ├── logger.py
@@ -97,14 +97,14 @@ support_it-storage-manager/
 │   │   └── recording.py
 │   │
 │   ├── repositories/
-│   │   └── recording_repository.py
+│   │   └── recording_repository.py → SQLite
 │   │
-│   ├── services/
+│   ├── services/ → logique métier
 │   │   ├── zoom_service.py
 │   │   ├── auth_service.py
 │   │   └── metrics_service.py
 │   │
-│   └── views/
+│   └── views/ → interface
 │       ├── sidebar.py
 │       ├── list_view.py
 │       └── metrics_view.py

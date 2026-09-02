@@ -1,23 +1,39 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
 
-from src.config.settings import (
-    get_env_credentials,
-)
+from src.config.settings import get_env_credentials
 from src.config.texts import TEXTS
+
+from src.clients.zoom_client import ZoomClient
+
 from src.repositories.recording_repository import (
     RecordingRepository,
 )
-from src.services.auth_service import AuthService
-from src.services.zoom_service import ZoomService
-from src.views.list_view import render_list_view
-from src.views.metrics_view import render_metrics_view
-from src.views.sidebar import render_sidebar
+
+from src.services.auth_service import (
+    AuthService,
+)
+
+from src.services.zoom_service import (
+    ZoomService,
+)
+
+from src.views.sidebar import (
+    render_sidebar,
+)
+
+from src.views.list_view import (
+    render_list_view,
+)
+
+from src.views.metrics_view import (
+    render_metrics_view,
+)
 
 
-# =============================================================================
-# CONFIG
-# =============================================================================
+# ==========================================================================
+# CONFIGURATION STREAMLIT
+# ==========================================================================
 
 st.set_page_config(
     page_title=TEXTS["page_title"],
@@ -26,64 +42,78 @@ st.set_page_config(
 )
 
 
-# =============================================================================
-# DEPENDENCIES
-# =============================================================================
+# ==========================================================================
+# CONFIGURATION
+# ==========================================================================
 
 env_client_id, env_client_secret, env_refresh_token = (
     get_env_credentials()
 )
 
 
+# ==========================================================================
+# SESSION STATE
+# ==========================================================================
+
+if "current_refresh_token" not in st.session_state:
+
+    st.session_state.current_refresh_token = (
+        env_refresh_token
+    )
+
+
+# ==========================================================================
+# DEPENDENCIES
+# ==========================================================================
+
 repository = RecordingRepository()
-
 repository.init_db()
-
 
 auth_service = AuthService(
     client_id=env_client_id,
     client_secret=env_client_secret,
-    refresh_token=env_refresh_token,
 )
 
+zoom_client = ZoomClient()
 
 zoom_service = ZoomService(
     auth_service=auth_service,
+    zoom_client=zoom_client,
     repository=repository,
 )
 
 
-# =============================================================================
-# UI
-# =============================================================================
+# ==========================================================================
+# HEADER
+# ==========================================================================
 
 st.title(
     TEXTS["app_header"]
 )
 
 
-client_id, client_secret, quota_gb = (
-    render_sidebar(
-        env_client_id,
-        env_client_secret,
-        zoom_service,
-        repository,
-    )
+# ==========================================================================
+# SIDEBAR
+# ==========================================================================
+
+client_id, client_secret, quota_gb = render_sidebar(
+    env_client_id=env_client_id,
+    env_client_secret=env_client_secret,
+    zoom_service=zoom_service,
+    repository=repository,
 )
 
 
-# Important :
-# Les credentials peuvent avoir été modifiés dans la sidebar.
-auth_service.client_id = client_id
-auth_service.client_secret = client_secret
+# ==========================================================================
+# LOAD DATABASE
+# ==========================================================================
+
+df = repository.load_recordings()
 
 
-# =============================================================================
-# DATA
-# =============================================================================
-
-df = repository.load_dataframe()
-
+# ==========================================================================
+# EMPTY DATABASE
+# ==========================================================================
 
 if df.empty:
 
@@ -93,9 +123,13 @@ if df.empty:
 
 else:
 
-    # Normalisation timezone
+    # ----------------------------------------------------------------------
+    # Normalisation datetime
+    # ----------------------------------------------------------------------
+
     if (
-        pd.api.types.is_datetime64_any_dtype(
+        "start_time" in df.columns
+        and pd.api.types.is_datetime64_any_dtype(
             df["start_time"]
         )
         and getattr(
@@ -107,12 +141,13 @@ else:
 
         df["start_time"] = (
             df["start_time"]
-            .dt.tz_localize(None)
+            .dt
+            .tz_localize(None)
         )
 
-    # ========================================================================
-    # TABS
-    # ========================================================================
+    # ----------------------------------------------------------------------
+    # Tabs
+    # ----------------------------------------------------------------------
 
     tab_metrics, tab_list = st.tabs(
         [
@@ -121,6 +156,10 @@ else:
         ]
     )
 
+    # ----------------------------------------------------------------------
+    # METRICS
+    # ----------------------------------------------------------------------
+
     with tab_metrics:
 
         render_metrics_view(
@@ -128,9 +167,13 @@ else:
             quota_gb,
         )
 
+    # ----------------------------------------------------------------------
+    # LIST
+    # ----------------------------------------------------------------------
+
     with tab_list:
 
         render_list_view(
             df,
-            zoom_service,
+            zoom_service=zoom_service,
         )

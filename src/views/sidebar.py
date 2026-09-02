@@ -1,16 +1,13 @@
 import streamlit as st
 
 from src.config.logger import (
+    log_error,
     log_info,
     log_warning,
 )
-from src.config.settings import (
-    DEFAULT_QUOTA_GB,
-)
+from src.config.settings import DEFAULT_QUOTA_GB
 from src.config.texts import TEXTS
-from src.repositories.recording_repository import (
-    RecordingRepository,
-)
+from src.repositories.recording_repository import RecordingRepository
 from src.services.zoom_service import ZoomService
 
 
@@ -23,9 +20,9 @@ def render_sidebar(
 
     with st.sidebar:
 
-        # =====================================================================
+        # ==================================================================
         # CREDENTIALS
-        # =====================================================================
+        # ==================================================================
 
         st.header(
             TEXTS["sidebar"]["creds_header"]
@@ -44,17 +41,20 @@ def render_sidebar(
         )
 
         if client_id and client_secret:
+
             st.caption(
                 TEXTS["sidebar"]["status_ok"]
             )
+
         else:
+
             st.caption(
                 TEXTS["sidebar"]["status_missing"]
             )
 
-        # =====================================================================
+        # ==================================================================
         # QUOTA
-        # =====================================================================
+        # ==================================================================
 
         st.markdown("---")
 
@@ -70,9 +70,9 @@ def render_sidebar(
             format="%.1f",
         )
 
-        # =====================================================================
-        # SYNC
-        # =====================================================================
+        # ==================================================================
+        # SYNCHRONISATION
+        # ==================================================================
 
         st.markdown("---")
 
@@ -95,6 +95,10 @@ def render_sidebar(
             help=TEXTS["sidebar"]["sync_mode_help"],
         )
 
+        # ------------------------------------------------------------------
+        # Synchronisation depuis le dernier enregistrement
+        # ------------------------------------------------------------------
+
         if (
             sync_mode
             == TEXTS["sidebar"]["sync_modes"][0]
@@ -107,25 +111,34 @@ def render_sidebar(
                 f"**{from_date.strftime('%d/%m/%Y')}**"
             )
 
+        # ------------------------------------------------------------------
+        # Synchronisation depuis une date
+        # ------------------------------------------------------------------
+
         else:
 
             from_date = st.date_input(
                 TEXTS["sidebar"]["date_input_label"],
-                oldest_date,
+                value=oldest_date,
             )
 
-        # =====================================================================
-        # BUTTON
-        # =====================================================================
+        # ==================================================================
+        # BOUTON SYNCHRONISATION
+        # ==================================================================
 
         if st.button(
             TEXTS["sidebar"]["btn_sync"]
         ):
 
+            # --------------------------------------------------------------
+            # Validation credentials
+            # --------------------------------------------------------------
+
             if not client_id or not client_secret:
 
                 log_warning(
-                    "Synchronisation sans credentials."
+                    "Tentative de synchronisation "
+                    "sans credentials Zoom."
                 )
 
                 st.warning(
@@ -137,26 +150,33 @@ def render_sidebar(
             else:
 
                 log_info(
-                    "Synchronisation demandée "
-                    "depuis la sidebar."
-                )
-
-                # Le ZoomService utilise les credentials
-                # actuellement saisis.
-                zoom_service.auth_service.client_id = (
-                    client_id
-                )
-
-                zoom_service.auth_service.client_secret = (
-                    client_secret
+                    "Bouton de synchronisation cliqué."
                 )
 
                 try:
 
+                    # ------------------------------------------------------
+                    # Transmission des credentials à AuthService
+                    # ------------------------------------------------------
+
+                    zoom_service.set_credentials(
+                        client_id=client_id,
+                        client_secret=client_secret,
+                    )
+
+                    # ------------------------------------------------------
+                    # Synchronisation
+                    # ------------------------------------------------------
+
                     count = (
                         zoom_service.sync_recordings(
-                            str(from_date)
+                            from_date=from_date.isoformat()
                         )
+                    )
+
+                    log_info(
+                        "Synchronisation Zoom terminée : "
+                        f"{count} enregistrement(s)."
                     )
 
                     st.success(
@@ -171,12 +191,14 @@ def render_sidebar(
 
                 except Exception as exc:
 
-                    log_warning(
-                        f"Synchronisation échouée : {exc}"
+                    log_error(
+                        "Échec de la synchronisation Zoom : "
+                        f"{exc}",
+                        exc_info=True,
                     )
 
                     st.error(
-                        f"Erreur lors de la synchronisation : "
+                        "Erreur lors de la synchronisation : "
                         f"{exc}"
                     )
 

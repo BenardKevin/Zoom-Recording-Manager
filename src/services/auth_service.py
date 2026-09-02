@@ -1,119 +1,206 @@
 import time
 from typing import Optional
 
+import requests
 import streamlit as st
 from dotenv import set_key
 
-from src.clients.zoom_client import (
-    ZoomAuthenticationError,
-    request_access_token,
+from src.config.logger import (
+    log_error,
+    log_info,
+    log_warning,
 )
-from src.config.logger import log_error, log_info, log_warning
 from src.config.settings import (
+    API_TIMEOUT,
     ENV_FILE,
     TOKEN_CACHE_TTL_SECONDS,
+    ZOOM_OAUTH_URL,
 )
 
 
 class AuthService:
-    """Gère l'authentification OAuth Zoom."""
+    """
+    Gère l'authentification OAuth2 auprès de Zoom.
 
-    SESSION_ACCESS_TOKEN = "zoom_access_token"
-    SESSION_TOKEN_EXPIRY = "zoom_token_expires_at"
-    SESSION_REFRESH_TOKEN = "zoom_refresh_token"
+    Responsabilités :
+    - gérer les credentials OAuth ;
+    - récupérer un access token ;
+    - mettre en cache l'access token ;
+    - gérer le renouvellement du refresh token ;
+    - persister le nouveau refresh token dans le .env.
+    """
 
     def __init__(
         self,
+        client_id: str = "",
+        client_secret: str = "",
+        refresh_token: str = "",
+    ):
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+        # Le refresh token courant est conservé dans la session
+        # car Zoom peut en fournir un nouveau lors du refresh.
+        if "current_refresh_token" not in st.session_state:
+            st.session_state.current_refresh_token = refresh_token
+
+    # ==========================================================================
+    # CREDENTIALS
+    # ==========================================================================
+
+    def set_credentials(
+        self,
         client_id: str,
         client_secret: str,
-        refresh_token: str,
-    ):
+    ) -> None:
+        """
+        Met à jour les credentials OAuth utilisés pendant la session.
+        """
 
         self.client_id = client_id
         self.client_secret = client_secret
-        self.refresh_token = refresh_token
 
-    def _get_cached_token(self) -> Optional[str]:
-
-        token = st.session_state.get(
-            self.SESSION_ACCESS_TOKEN
+        log_info(
+            "Credentials Zoom mis à jour pour la session."
         )
 
-        expires_at = st.session_state.get(
-            self.SESSION_TOKEN_EXPIRY,
-            0,
+        # Les credentials pouvant changer depuis la sidebar,
+        # on invalide le token courant afin d'éviter d'utiliser
+        # un token obtenu avec d'autres credentials.
+        self.invalidate_token()
+
+    # ==========================================================================
+    # ACCESS TOKEN
+    # ==========================================================================
+
+    def get_access_token(self) -> Optional[str]:
+        """
+        Retourne un access token Zoom valide.
+
+        Utilise le token en cache lorsqu'il est encore valide.
+        Sinon, effectue automatiquement un refresh OAuth.
+        """
+
+        # ----------------------------------------------------------------------
+        # 1. Validation des credentials
+        # ----------------------------------------------------------------------
+
+        if not self.client_id or not self.client_secret:
+
+            log_error(
+                "Impossible d'obtenir un token Zoom : "
+                "credentials manquants."
+            )
+
+            return None
+
+        now = time.time()
+
+        # ----------------------------------------------------------------------
+        # 2. Vérification du token en cache
+        # ----------------------------------------------------------------------
+
+        cached_token = st.session_state.get(
+            "access_token"
+        )
+
+        token_expires_at = st.session_state.get(
+            "token_expires_at"
         )
 
         if (
-            token
-            and time.time() < expires_at
+            cached_token
+            and token_expires_at
+            and now < token_expires_at
         ):
-            return token
-
-        return None
-
-    def get_access_token(self) -> Optional[str]:
-
-        # ---------------------------------------------------------------------
-        # Cache
-        # ---------------------------------------------------------------------
-
-        cached_token = self._get_cached_token()
-
-        if cached_token:
             return cached_token
 
-        # ---------------------------------------------------------------------
-        # Validation
-        # ---------------------------------------------------------------------
+        # ----------------------------------------------------------------------
+        # 3. Récupération du refresh token
+        # ----------------------------------------------------------------------
 
-        if not self.client_id:
-            log_error("Zoom Client ID absent.")
-            return None
-
-        if not self.client_secret:
-            log_error("Zoom Client Secret absent.")
-            return None
-
-        current_refresh_token = (
-            st.session_state.get(
-                self.SESSION_REFRESH_TOKEN
-            )
-            or self.refresh_token
+        refresh_token = st.session_state.get(
+            "current_refresh_token",
+            "",
         )
 
-        if not current_refresh_token:
+        if not refresh_token:
 
             log_error(
-                "Zoom Refresh Token absent."
+                "Aucun Refresh Token Zoom disponible."
             )
 
             return None
 
-        # ---------------------------------------------------------------------
-        # Refresh
-        # ---------------------------------------------------------------------
+        # ----------------------------------------------------------------------
+        # 4. Appel OAuth Zoom
+        # ----------------------------------------------------------------------
+
+        log_info(
+            "Demande d'un nouveau token d'accès Zoom..."
+        )
+
+        payload = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
 
         try:
 
-            log_info(
-                "Renouvellement du token Zoom..."
+            response = requests.post(
+                ZOOM_OAUTH_URL,
+                auth=(
+                    self.client_id,
+                    self.client_secret,
+                ),
+                data=payload,
+                timeout=API_TIMEOUT,
             )
 
-            data = request_access_token(
-                self.client_id,
-                self.client_secret,
-                current_refresh_token,
-            )
-
-        except ZoomAuthenticationError as exc:
+        except requests.exceptions.RequestException as exc:
 
             log_error(
-                f"Erreur OAuth Zoom : {exc}",
+                "Erreur réseau lors de "
+                f"l'authentification Zoom : {exc}",
                 exc_info=True,
             )
 
             return None
+
+        # ----------------------------------------------------------------------
+        # 5. Vérification HTTP
+        # ----------------------------------------------------------------------
+
+        if response.status_code != 200:
+
+            log_error(
+                "Erreur d'authentification Zoom "
+                f"({response.status_code}) : "
+                f"{response.text}"
+            )
+
+            return None
+
+        # ----------------------------------------------------------------------
+        # 6. Parsing JSON
+        # ----------------------------------------------------------------------
+
+        try:
+
+            data = response.json()
+
+        except ValueError as exc:
+
+            log_error(
+                f"Réponse OAuth Zoom invalide : {exc}",
+                exc_info=True,
+            )
+
+            return None
+
+        # ----------------------------------------------------------------------
+        # 7. Extraction des tokens
+        # ----------------------------------------------------------------------
 
         access_token = data.get(
             "access_token"
@@ -124,63 +211,98 @@ class AuthService:
         )
 
         expires_in = data.get(
-            "expires_in",
-            TOKEN_CACHE_TTL_SECONDS,
+            "expires_in"
         )
 
         if not access_token:
 
             log_error(
-                "Zoom n'a pas fourni d'access token."
+                "Zoom n'a pas retourné d'access token."
             )
 
             return None
 
-        # ---------------------------------------------------------------------
-        # Cache
-        # ---------------------------------------------------------------------
+        # ----------------------------------------------------------------------
+        # 8. Calcul du TTL
+        # ----------------------------------------------------------------------
 
-        st.session_state[
-            self.SESSION_ACCESS_TOKEN
-        ] = access_token
+        if expires_in:
 
-        # Marge de sécurité de 5 minutes
-        ttl = min(
-            int(expires_in),
-            TOKEN_CACHE_TTL_SECONDS,
+            ttl = max(
+                60,
+                int(expires_in) - 60,
+            )
+
+        else:
+
+            ttl = TOKEN_CACHE_TTL_SECONDS
+
+        # ----------------------------------------------------------------------
+        # 9. Mise en cache
+        # ----------------------------------------------------------------------
+
+        st.session_state.access_token = (
+            access_token
         )
 
-        st.session_state[
-            self.SESSION_TOKEN_EXPIRY
-        ] = time.time() + ttl
+        st.session_state.token_expires_at = (
+            now + ttl
+        )
 
-        # ---------------------------------------------------------------------
-        # Refresh token rotation
-        # ---------------------------------------------------------------------
+        # ----------------------------------------------------------------------
+        # 10. Rotation du Refresh Token
+        # ----------------------------------------------------------------------
 
         if new_refresh_token:
 
-            st.session_state[
-                self.SESSION_REFRESH_TOKEN
-            ] = new_refresh_token
+            st.session_state.current_refresh_token = (
+                new_refresh_token
+            )
 
             try:
 
                 set_key(
-                    str(ENV_FILE),
+                    ENV_FILE,
                     "ZOOM_REFRESH_TOKEN",
                     new_refresh_token,
                 )
 
                 log_info(
-                    "Nouveau Refresh Token sauvegardé."
+                    "Nouveau Refresh Token Zoom sauvegardé."
                 )
 
             except Exception as exc:
 
                 log_warning(
-                    "Impossible de sauvegarder "
-                    f"le Refresh Token : {exc}"
+                    "Impossible de sauvegarder le nouveau "
+                    f"Refresh Token : {exc}"
                 )
 
+        log_info(
+            "Token d'accès Zoom obtenu avec succès."
+        )
+
         return access_token
+
+    # ==========================================================================
+    # INVALIDATION
+    # ==========================================================================
+
+    def invalidate_token(self) -> None:
+        """
+        Invalide le token actuellement présent en session.
+        """
+
+        st.session_state.pop(
+            "access_token",
+            None,
+        )
+
+        st.session_state.pop(
+            "token_expires_at",
+            None,
+        )
+
+        log_info(
+            "Token d'accès Zoom invalidé."
+        )

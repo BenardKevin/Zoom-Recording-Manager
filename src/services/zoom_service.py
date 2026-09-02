@@ -1,313 +1,333 @@
-from concurrent.futures import (
-    ThreadPoolExecutor,
-    as_completed,
-)
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from typing import List
 
-import streamlit as st
-
-from src.clients.zoom_client import (
-    ZoomAPIError,
-    ZoomAuthenticationError,
-    ZoomClient,
-)
+from src.clients.zoom_client import ZoomClient
 from src.config.logger import log_error, log_info
-from src.config.settings import (
-    MAX_WORKERS,
-    SYNC_INTERVAL_DAYS,
-)
-from src.models.recording import Recording
-from src.repositories.recording_repository import (
-    RecordingRepository,
-)
+from src.config.settings import SYNC_INTERVAL_DAYS
+from src.repositories.recording_repository import RecordingRepository
 from src.services.auth_service import AuthService
 
 
 class ZoomService:
-    """Logique métier liée aux enregistrements Zoom."""
+    """
+    Service métier responsable de la gestion des enregistrements Zoom.
+
+    Architecture :
+
+        View
+          ↓
+        ZoomService
+        ↙        ↘
+    AuthService  ZoomClient
+                    ↓
+                  Zoom API
+
+        ZoomService
+              ↓
+        RecordingRepository
+              ↓
+            SQLite
+    """
 
     def __init__(
         self,
         auth_service: AuthService,
+        zoom_client: ZoomClient,
         repository: RecordingRepository,
     ):
-
         self.auth_service = auth_service
+        self.zoom_client = zoom_client
         self.repository = repository
 
-    # =========================================================================
-    # CLIENT
-    # =========================================================================
+    # ==================================================================
+    # AUTHENTIFICATION
+    # ==================================================================
 
-    def _get_client(self) -> ZoomClient | None:
-
-        token = self.auth_service.get_access_token()
-
-        if not token:
-            return None
-
-        return ZoomClient(token)
-
-    # =========================================================================
-    # DATE RANGES
-    # =========================================================================
-
-    @staticmethod
-    def _build_date_ranges(
-        start_date: datetime,
-        end_date: datetime,
-    ) -> list[tuple[str, str]]:
-
-        ranges = []
-
-        current_start = start_date
-
-        while current_start < end_date:
-
-            current_end = min(
-                current_start
-                + timedelta(days=SYNC_INTERVAL_DAYS - 1),
-                end_date,
-            )
-
-            ranges.append(
-                (
-                    current_start.strftime(
-                        "%Y-%m-%d"
-                    ),
-                    current_end.strftime(
-                        "%Y-%m-%d"
-                    ),
-                )
-            )
-
-            current_start = (
-                current_end
-                + timedelta(days=1)
-            )
-
-        return ranges
-
-    # =========================================================================
-    # SINGLE RANGE
-    # =========================================================================
-
-    def _fetch_range(
+    def set_credentials(
         self,
-        client: ZoomClient,
-        date_range: tuple[str, str],
-    ) -> list[Recording]:
+        client_id: str,
+        client_secret: str,
+    ) -> None:
+        """
+        Met à jour les credentials Zoom utilisés pour la session.
+        """
 
-        from_date, to_date = date_range
-
-        raw_recordings = client.get_recordings(
-            from_date,
-            to_date,
+        self.auth_service.set_credentials(
+            client_id=client_id,
+            client_secret=client_secret,
         )
 
-        recordings = []
+    def _get_access_token(
+        self,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+    ) -> str:
 
-        for raw in raw_recordings:
+        if client_id and client_secret:
+            self.auth_service.set_credentials(
+                client_id,
+                client_secret,
+            )
 
-            try:
+        access_token = self.auth_service.get_access_token()
 
-                recording = Recording.from_zoom_data(
-                    raw
-                )
+        if not access_token:
+            raise RuntimeError(
+                "Impossible d'obtenir un token Zoom."
+            )
 
-                if recording.uuid:
-                    recordings.append(
-                        recording
-                    )
+        return access_token
 
-            except (ValueError, TypeError, KeyError) as exc:
-
-                log_error(
-                    f"Enregistrement Zoom invalide : "
-                    f"{exc}"
-                )
-
-        return recordings
-
-    # =========================================================================
-    # SYNC
-    # =========================================================================
+    # ==================================================================
+    # SYNCHRONISATION
+    # ==================================================================
 
     def sync_recordings(
         self,
         from_date: str,
-        max_workers: int = MAX_WORKERS,
-    ) -> int:
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        max_workers: int = 5,
+    ) -> str:
+        """
+        Synchronise les enregistrements Zoom avec la BDD locale.
+
+        Args:
+            from_date:
+                Date de début au format YYYY-MM-DD.
+
+            max_workers:
+                Nombre maximum de requêtes parallèles.
+
+        Returns:
+            Nombre d'enregistrements sauvegardés.
+        """
+
+        log_info(
+            f"Synchronisation Zoom demandée depuis le {from_date}."
+        )
+
+        # --------------------------------------------------------------
+        # 1. Validation de la date
+        # --------------------------------------------------------------
 
         try:
-
             start_dt = datetime.strptime(
                 from_date,
                 "%Y-%m-%d",
             )
 
-        except ValueError:
-
+        except ValueError as exc:
             raise ValueError(
-                "La date doit être au format YYYY-MM-DD."
-            )
+                "Format de date invalide. "
+                "Le format attendu est YYYY-MM-DD."
+            ) from exc
+
+        # --------------------------------------------------------------
+        # 2. Authentification
+        # --------------------------------------------------------------
+
+        access_token = self._get_access_token()
+
+        # --------------------------------------------------------------
+        # 3. Construction des périodes
+        # --------------------------------------------------------------
 
         end_dt = datetime.now()
 
-        if start_dt > end_dt:
-            raise ValueError(
-                "La date de début ne peut pas être "
-                "dans le futur."
+        date_ranges = []
+
+        current_start = start_dt
+
+        while current_start < end_dt:
+
+            current_end = min(
+                current_start
+                + timedelta(days=SYNC_INTERVAL_DAYS),
+                end_dt,
             )
 
-        client = self._get_client()
+            date_ranges.append(
+                (
+                    current_start.strftime("%Y-%m-%d"),
+                    current_end.strftime("%Y-%m-%d"),
+                )
+            )
 
-        if not client:
-            return 0
-
-        date_ranges = self._build_date_ranges(
-            start_dt,
-            end_dt,
-        )
-
-        if not date_ranges:
-            return 0
-
-        all_recordings: list[Recording] = []
+            current_start = (
+                current_end + timedelta(days=1)
+            )
 
         log_info(
-            f"Synchronisation Zoom : "
-            f"{from_date} → "
-            f"{end_dt.strftime('%Y-%m-%d')}"
+            f"{len(date_ranges)} période(s) "
+            "à synchroniser."
         )
 
-        # =====================================================================
-        # PARALLEL REQUESTS
-        # =====================================================================
+        # --------------------------------------------------------------
+        # 4. Récupération parallèle
+        # --------------------------------------------------------------
+
+        all_meetings: List[dict] = []
 
         with ThreadPoolExecutor(
             max_workers=max_workers
         ) as executor:
 
-            future_map = {
+            futures = {
                 executor.submit(
-                    self._fetch_range,
-                    client,
-                    date_range,
-                ): date_range
-                for date_range in date_ranges
+                    self.zoom_client.get_recordings,
+                    access_token,
+                    from_str,
+                    to_str,
+                ): (
+                    from_str,
+                    to_str,
+                )
+                for from_str, to_str in date_ranges
             }
 
-            for future in as_completed(
-                future_map
-            ):
+            for future in as_completed(futures):
 
-                date_range = future_map[future]
+                from_str, to_str = futures[future]
 
                 try:
 
-                    recordings = future.result()
+                    meetings = future.result()
 
-                    all_recordings.extend(
-                        recordings
+                    all_meetings.extend(
+                        meetings
                     )
 
-                except ZoomAuthenticationError as exc:
-
-                    log_error(
-                        f"Authentification Zoom échouée "
-                        f"pour {date_range}: {exc}"
-                    )
-
-                except ZoomAPIError as exc:
-
-                    log_error(
-                        f"Erreur API Zoom "
-                        f"pour {date_range}: {exc}"
+                    log_info(
+                        f"Période {from_str} → {to_str} : "
+                        f"{len(meetings)} enregistrement(s)."
                     )
 
                 except Exception as exc:
 
                     log_error(
-                        f"Erreur inattendue "
-                        f"pour {date_range}: {exc}",
+                        f"Erreur période "
+                        f"{from_str} → {to_str} : {exc}",
                         exc_info=True,
                     )
 
-        # =====================================================================
-        # DEDUPLICATION
-        # =====================================================================
+        # --------------------------------------------------------------
+        # 5. Aucun résultat
+        # --------------------------------------------------------------
 
-        unique_recordings = {
-            recording.uuid: recording
-            for recording in all_recordings
-        }
-
-        recordings = list(
-            unique_recordings.values()
-        )
-
-        if not recordings:
+        if not all_meetings:
 
             log_info(
-                "Aucun nouvel enregistrement trouvé."
+                "Aucun enregistrement Zoom trouvé."
             )
 
             return 0
 
-        # =====================================================================
-        # DATABASE
-        # =====================================================================
+        # --------------------------------------------------------------
+        # 6. Sauvegarde en une transaction
+        # --------------------------------------------------------------
 
-        saved_count = (
-            self.repository.save_recordings(
-                recordings
+        try:
+
+            saved_count = (
+                self.repository.save_recordings(
+                    all_meetings
+                )
             )
-        )
+
+        except Exception as exc:
+
+            log_error(
+                "Échec de la sauvegarde des "
+                f"enregistrements : {exc}",
+                exc_info=True,
+            )
+
+            raise
 
         log_info(
-            f"Synchronisation terminée : "
-            f"{saved_count} enregistrement(s)."
+            "Synchronisation terminée : "
+            f"{saved_count} enregistrement(s) sauvegardé(s)."
         )
 
         return saved_count
 
-    # =========================================================================
-    # DELETE
-    # =========================================================================
+    # ==================================================================
+    # SUPPRESSION
+    # ==================================================================
 
     def delete_recording(
         self,
         recording_uuid: str,
-        action: str = "trash",
     ) -> bool:
-
-        client = self._get_client()
-
-        if not client:
-            return False
+        """
+        Supprime un enregistrement de Zoom puis de SQLite.
+        """
 
         try:
 
-            success = client.delete_recording(
-                recording_uuid,
-                action,
-            )
+            access_token = self._get_access_token()
 
-            if not success:
-                return False
-
-            # On supprime seulement après succès Zoom
-            self.repository.delete_recording(
-                recording_uuid
-            )
-
-            return True
-
-        except ZoomAPIError as exc:
+        except Exception as exc:
 
             log_error(
-                f"Erreur suppression Zoom : {exc}"
+                f"Impossible de supprimer "
+                f"{recording_uuid} : {exc}",
+                exc_info=True,
             )
 
             return False
+
+        # --------------------------------------------------------------
+        # 1. Suppression côté Zoom
+        # --------------------------------------------------------------
+
+        try:
+
+            success = (
+                self.zoom_client.delete_recording(
+                    access_token=access_token,
+                    recording_uuid=recording_uuid,
+                )
+            )
+
+        except Exception as exc:
+
+            log_error(
+                f"Erreur suppression Zoom "
+                f"{recording_uuid} : {exc}",
+                exc_info=True,
+            )
+
+            return False
+
+        if not success:
+            return False
+
+        # --------------------------------------------------------------
+        # 2. Suppression côté SQLite
+        # --------------------------------------------------------------
+
+        deleted = (
+            self.repository.delete_recording(
+                recording_uuid
+            )
+        )
+
+        if not deleted:
+
+            log_error(
+                f"Enregistrement {recording_uuid} "
+                "supprimé de Zoom mais absent "
+                "de la BDD locale."
+            )
+
+            return False
+
+        log_info(
+            f"Enregistrement {recording_uuid} "
+            "supprimé de Zoom et de la BDD."
+        )
+
+        return True

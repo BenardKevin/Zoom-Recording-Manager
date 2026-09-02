@@ -1,261 +1,360 @@
 import json
-import sqlite3
 from datetime import date
 from typing import Optional
 
 import pandas as pd
 
 from src.config.logger import log_error, log_info
-from src.config.settings import (
-    DB_FILE,
-    DEFAULT_HISTORY_START_DATE,
-)
-from src.models.recording import Recording
+from src.config.settings import DB_FILE
 
 
 class RecordingRepository:
-    """Accès aux données SQLite des enregistrements."""
+    """
+    Repository responsable de l'accès aux données locales SQLite.
 
-    def __init__(self, db_file=DB_FILE):
+    Le repository ne contient aucune logique Zoom/API.
+    Il est uniquement responsable de la persistance des recordings.
+    """
+
+    def __init__(self, db_file: str = DB_FILE):
         self.db_file = db_file
 
-    # =========================================================================
-    # DATABASE
-    # =========================================================================
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(
-            self.db_file,
-            timeout=30,
-        )
-
-        conn.execute("PRAGMA foreign_keys = ON")
-
-        return conn
+    # ==================================================================
+    # INITIALISATION
+    # ==================================================================
 
     def init_db(self) -> None:
+        """Crée la table recordings si elle n'existe pas."""
+
+        import sqlite3
 
         try:
-
-            with self._connect() as conn:
+            with sqlite3.connect(self.db_file) as conn:
 
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS recordings (
                         uuid TEXT PRIMARY KEY,
-                        meeting_id INTEGER NOT NULL,
-                        topic TEXT NOT NULL,
-                        start_time TEXT NOT NULL,
-                        duration INTEGER DEFAULT 0,
-                        total_size INTEGER DEFAULT 0,
-                        file_count INTEGER DEFAULT 0,
-                        share_url TEXT DEFAULT '',
+                        meeting_id INTEGER,
+                        topic TEXT,
+                        start_time TEXT,
+                        duration INTEGER,
+                        total_size INTEGER,
+                        file_count INTEGER,
+                        share_url TEXT,
                         raw_data TEXT
                     )
                     """
                 )
 
-                conn.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS
-                    idx_recordings_start_time
-                    ON recordings(start_time)
-                    """
-                )
-
-                conn.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS
-                    idx_recordings_meeting_id
-                    ON recordings(meeting_id)
-                    """
-                )
-
                 conn.commit()
-
-            log_info("Base de données initialisée.")
 
         except sqlite3.Error as exc:
 
             log_error(
-                f"Erreur initialisation BDD : {exc}",
+                f"Erreur d'initialisation BDD : {exc}",
                 exc_info=True,
             )
 
             raise
 
-    # =========================================================================
-    # DATES
-    # =========================================================================
+    # ==================================================================
+    # SAVE
+    # ==================================================================
 
-    def get_oldest_recording_date(self) -> date:
+    def save_recording(
+        self,
+        meeting_data: dict,
+    ) -> None:
+        """Insère ou met à jour un enregistrement."""
+
+        import sqlite3
 
         try:
 
-            with self._connect() as conn:
+            with sqlite3.connect(self.db_file) as conn:
 
-                row = conn.execute(
+                conn.execute(
                     """
-                    SELECT MIN(start_time)
+                    INSERT OR REPLACE INTO recordings
+                    (
+                        uuid,
+                        meeting_id,
+                        topic,
+                        start_time,
+                        duration,
+                        total_size,
+                        file_count,
+                        share_url,
+                        raw_data
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        meeting_data["uuid"],
+                        meeting_data["id"],
+                        meeting_data.get("topic", ""),
+                        meeting_data["start_time"],
+                        meeting_data.get("duration", 0),
+                        meeting_data.get("total_size", 0),
+                        meeting_data.get("recording_count", 0),
+                        meeting_data.get("share_url", ""),
+                        json.dumps(
+                            meeting_data,
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+
+                conn.commit()
+
+        except sqlite3.Error as exc:
+
+            log_error(
+                f"Erreur de sauvegarde recording : {exc}",
+                exc_info=True,
+            )
+
+            raise
+
+    # ==================================================================
+    # SAVE MANY
+    # ==================================================================
+
+    def save_recordings(
+        self,
+        meetings: list[dict],
+    ) -> int:
+        """
+        Sauvegarde plusieurs enregistrements dans une transaction.
+
+        Returns:
+            Nombre d'enregistrements sauvegardés.
+        """
+
+        import sqlite3
+
+        if not meetings:
+            return 0
+
+        try:
+
+            records = [
+                (
+                    meeting["uuid"],
+                    meeting["id"],
+                    meeting.get("topic", ""),
+                    meeting["start_time"],
+                    meeting.get("duration", 0),
+                    meeting.get("total_size", 0),
+                    meeting.get("recording_count", 0),
+                    meeting.get("share_url", ""),
+                    json.dumps(
+                        meeting,
+                        ensure_ascii=False,
+                    ),
+                )
+                for meeting in meetings
+            ]
+
+            with sqlite3.connect(self.db_file) as conn:
+
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO recordings
+                    (
+                        uuid,
+                        meeting_id,
+                        topic,
+                        start_time,
+                        duration,
+                        total_size,
+                        file_count,
+                        share_url,
+                        raw_data
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    records,
+                )
+
+                conn.commit()
+
+            log_info(
+                f"{len(records)} enregistrement(s) sauvegardé(s)."
+            )
+
+            return len(records)
+
+        except sqlite3.Error as exc:
+
+            log_error(
+                f"Erreur de sauvegarde multiple : {exc}",
+                exc_info=True,
+            )
+
+            raise
+
+    # ==================================================================
+    # LOAD
+    # ==================================================================
+
+    def load_recordings(self) -> pd.DataFrame:
+        """
+        Charge tous les enregistrements locaux.
+
+        Returns:
+            DataFrame contenant les recordings.
+        """
+
+        import sqlite3
+
+        try:
+
+            with sqlite3.connect(self.db_file) as conn:
+
+                df = pd.read_sql_query(
+                    """
+                    SELECT *
                     FROM recordings
-                    """
-                ).fetchone()
+                    """,
+                    conn,
+                )
 
-            if row and row[0]:
+            if df.empty:
+                return df
 
-                return pd.to_datetime(
-                    row[0]
-                ).date()
+            # ----------------------------------------------------------
+            # Conversion date
+            # ----------------------------------------------------------
+
+            df["start_time"] = pd.to_datetime(
+                df["start_time"],
+                errors="coerce",
+            )
+
+            # ----------------------------------------------------------
+            # Taille MB
+            # ----------------------------------------------------------
+
+            df["size_mb"] = (
+                df["total_size"]
+                / (1024 * 1024)
+            ).round(2)
+
+            return df
 
         except Exception as exc:
 
             log_error(
-                f"Erreur recherche ancienne date : {exc}",
+                f"Erreur lors du chargement des recordings : {exc}",
                 exc_info=True,
             )
 
-        return pd.to_datetime(
-            DEFAULT_HISTORY_START_DATE
-        ).date()
+            return pd.DataFrame()
+
+    # ==================================================================
+    # LATEST DATE
+    # ==================================================================
 
     def get_latest_recording_date(self) -> date:
+        """Retourne la date du dernier enregistrement local."""
+
+        import sqlite3
 
         try:
 
-            with self._connect() as conn:
+            with sqlite3.connect(self.db_file) as conn:
 
-                row = conn.execute(
+                cursor = conn.execute(
                     """
                     SELECT MAX(start_time)
                     FROM recordings
                     """
-                ).fetchone()
+                )
 
-            if row and row[0]:
+                result = cursor.fetchone()
 
-                return pd.to_datetime(
-                    row[0]
-                ).date()
+            if result and result[0]:
+
+                latest_date = (
+                    pd.to_datetime(
+                        result[0]
+                    ).date()
+                )
+
+                return latest_date
 
         except Exception as exc:
 
             log_error(
-                f"Erreur recherche date récente : {exc}",
+                f"Erreur récupération dernière date : {exc}",
+                exc_info=True,
+            )
+
+        # Valeur par défaut
+        return pd.to_datetime(
+            "2024-01-01"
+        ).date()
+
+    # ==================================================================
+    # OLDEST DATE
+    # ==================================================================
+
+    def get_oldest_recording_date(self) -> date:
+        """Retourne la date du plus ancien enregistrement local."""
+
+        import sqlite3
+
+        try:
+
+            with sqlite3.connect(self.db_file) as conn:
+
+                cursor = conn.execute(
+                    """
+                    SELECT MIN(start_time)
+                    FROM recordings
+                    """
+                )
+
+                result = cursor.fetchone()
+
+            if result and result[0]:
+
+                oldest_date = (
+                    pd.to_datetime(
+                        result[0]
+                    ).date()
+                )
+
+                return oldest_date
+
+        except Exception as exc:
+
+            log_error(
+                f"Erreur récupération première date : {exc}",
                 exc_info=True,
             )
 
         return pd.to_datetime(
-            DEFAULT_HISTORY_START_DATE
+            "2024-01-01"
         ).date()
 
-    # =========================================================================
-    # WRITE
-    # =========================================================================
-
-    def save_recording(
-        self,
-        recording: Recording,
-    ) -> None:
-
-        query = """
-            INSERT INTO recordings (
-                uuid,
-                meeting_id,
-                topic,
-                start_time,
-                duration,
-                total_size,
-                file_count,
-                share_url,
-                raw_data
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-
-            ON CONFLICT(uuid) DO UPDATE SET
-                meeting_id = excluded.meeting_id,
-                topic = excluded.topic,
-                start_time = excluded.start_time,
-                duration = excluded.duration,
-                total_size = excluded.total_size,
-                file_count = excluded.file_count,
-                share_url = excluded.share_url,
-                raw_data = excluded.raw_data
-        """
-
-        with self._connect() as conn:
-
-            conn.execute(
-                query,
-                recording.to_db_tuple(),
-            )
-
-            conn.commit()
-
-    def save_recordings(
-        self,
-        recordings: list[Recording],
-    ) -> int:
-
-        if not recordings:
-            return 0
-
-        query = """
-            INSERT INTO recordings (
-                uuid,
-                meeting_id,
-                topic,
-                start_time,
-                duration,
-                total_size,
-                file_count,
-                share_url,
-                raw_data
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-
-            ON CONFLICT(uuid) DO UPDATE SET
-                meeting_id = excluded.meeting_id,
-                topic = excluded.topic,
-                start_time = excluded.start_time,
-                duration = excluded.duration,
-                total_size = excluded.total_size,
-                file_count = excluded.file_count,
-                share_url = excluded.share_url,
-                raw_data = excluded.raw_data
-        """
-
-        rows = [
-            recording.to_db_tuple()
-            for recording in recordings
-        ]
-
-        with self._connect() as conn:
-
-            conn.executemany(
-                query,
-                rows,
-            )
-
-            conn.commit()
-
-        log_info(
-            f"{len(rows)} enregistrement(s) sauvegardé(s) en BDD."
-        )
-
-        return len(rows)
-
-    # =========================================================================
+    # ==================================================================
     # DELETE
-    # =========================================================================
+    # ==================================================================
 
     def delete_recording(
         self,
         recording_uuid: str,
     ) -> bool:
+        """Supprime un enregistrement de la BDD locale."""
+
+        import sqlite3
 
         try:
 
-            with self._connect() as conn:
+            with sqlite3.connect(self.db_file) as conn:
 
                 cursor = conn.execute(
                     """
@@ -267,62 +366,55 @@ class RecordingRepository:
 
                 conn.commit()
 
-                return cursor.rowcount > 0
+                deleted = cursor.rowcount > 0
+
+            if deleted:
+
+                log_info(
+                    f"Recording {recording_uuid} "
+                    "supprimé de la BDD locale."
+                )
+
+            return deleted
 
         except sqlite3.Error as exc:
 
             log_error(
-                f"Erreur suppression BDD "
-                f"{recording_uuid}: {exc}",
+                f"Erreur suppression {recording_uuid} : {exc}",
                 exc_info=True,
             )
 
             return False
 
-    # =========================================================================
-    # READ
-    # =========================================================================
+    # ==================================================================
+    # COUNT
+    # ==================================================================
 
-    def load_dataframe(self) -> pd.DataFrame:
+    def count_recordings(self) -> int:
+        """Retourne le nombre total d'enregistrements."""
+
+        import sqlite3
 
         try:
 
-            with self._connect() as conn:
+            with sqlite3.connect(self.db_file) as conn:
 
-                df = pd.read_sql_query(
+                cursor = conn.execute(
                     """
-                    SELECT *
+                    SELECT COUNT(*)
                     FROM recordings
-                    ORDER BY start_time DESC
-                    """,
-                    conn,
+                    """
                 )
 
-            if df.empty:
-                return df
+                result = cursor.fetchone()
 
-            df["start_time"] = pd.to_datetime(
-                df["start_time"],
-                errors="coerce",
-            )
+            return int(result[0]) if result else 0
 
-            df["size_mb"] = (
-                df["total_size"] /
-                (1024 * 1024)
-            ).round(2)
-
-            df["size_gb"] = (
-                df["total_size"] /
-                (1024 * 1024 * 1024)
-            ).round(4)
-
-            return df
-
-        except Exception as exc:
+        except sqlite3.Error as exc:
 
             log_error(
-                f"Erreur lecture BDD : {exc}",
+                f"Erreur comptage recordings : {exc}",
                 exc_info=True,
             )
 
-            return pd.DataFrame()
+            return 0

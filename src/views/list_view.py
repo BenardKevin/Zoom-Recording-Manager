@@ -5,9 +5,6 @@ import pandas as pd
 import streamlit as st
 
 from src.config.texts import TEXTS
-from src.repositories.recording_repository import (
-    RecordingRepository,
-)
 from src.services.zoom_service import ZoomService
 
 

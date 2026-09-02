@@ -1,8 +1,11 @@
 import json
+
 import aiosqlite
 import pandas as pd
+
 from src.config.logger import log_error, log_info, log_warning
 from src.config.settings import DB_FILE
+
 
 async def init_db():
     """Initialise la table SQLite si elle n'existe pas."""
