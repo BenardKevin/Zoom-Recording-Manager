@@ -1,12 +1,11 @@
-======================================================================
-                  ZOOM STORAGE & RECORDING MANAGER
-======================================================================
+# ZOOM STORAGE & RECORDING MANAGER
+
 
 Tableau de bord Streamlit pour l'analyse, le suivi et la gestion du stockage des enregistrements Zoom Cloud (EDHEC Online).
 
 ----------------------------------------------------------------------
-1. FONCTIONNALITES
-----------------------------------------------------------------------
+## 1. FONCTIONNALITES
+
 - Authentification Zoom OAuth
 - Rafraîchissement automatique du Access Token
 - Synchronisation des enregistrements Zoom
@@ -27,16 +26,15 @@ Tableau de bord Streamlit pour l'analyse, le suivi et la gestion du stockage des
 - Comparaison mensuelle
 
 ----------------------------------------------------------------------
-2. INSTALLATION & PREREQUIS
-----------------------------------------------------------------------
-1. Cloner ou télécharger le projet :
-   cd zoom-recording-manager
+## 2. INSTALLATION & PREREQUIS
+
+1. Cloner ou télécharger le projet
 
 2. Installer les dépendances Python depuis le fichier requirements.txt
 
 ----------------------------------------------------------------------
-3. CONFIGURATION DE L'AUTHENTIFICATION ZOOM (OAUTH 2.0)
-----------------------------------------------------------------------
+## 3. CONFIGURATION DE L'AUTHENTIFICATION ZOOM (OAUTH 2.0)
+
 Lien de l'application Marketplace Zoom : https://marketplace.zoom.us/develop/applications/O_DAMeNlS4SxqMp4y5AqpQ/information
 Connecter vous sur Zoom via le sign in en haut à droite. Une fois connecté, sur la page du marketplace en bas à gauche, cliquer sur Developer.
 
@@ -70,8 +68,8 @@ ZOOM_CLIENT_SECRET=VOTRE_CLIENT_SECRET
 ZOOM_REFRESH_TOKEN=VOTRE_REFRESH_TOKEN_GENERE
 
 ----------------------------------------------------------------------
-4. DEMARRAGE DE L'APPLICATION
-----------------------------------------------------------------------
+## 4. DEMARRAGE DE L'APPLICATION
+
 Lancez l'application avec Streamlit :
 
 python -m streamlit run app.py
@@ -79,8 +77,9 @@ python -m streamlit run app.py
 L'interface sera accessible sur votre navigateur à l'adresse : http://localhost:8501
 
 ----------------------------------------------------------------------
-5. STRUCTURE DU PROJET
-----------------------------------------------------------------------
+## 5. STRUCTURE DU PROJET
+
+```
 support_it-storage-manager/
 │
 ├── src/
@@ -115,4 +114,5 @@ support_it-storage-manager/
 ├── README.md
 ├── requirements.txt
 └── zoom_recordings.db
+```
 ======================================================================
