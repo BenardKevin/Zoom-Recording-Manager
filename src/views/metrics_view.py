@@ -84,7 +84,6 @@ def render_storage_section(
 
     return remaining_gb
 
-
 def render_projection_section(
     df: pd.DataFrame,
     quota_gb: float,
@@ -147,7 +146,6 @@ def render_projection_section(
             ]
         )
 
-
 def render_activity_section(
     df: pd.DataFrame,
 ):
@@ -198,24 +196,10 @@ def render_activity_section(
         f"Total : {int(total_hours)}h",
     )
 
-
-def render_quick_wins_section(
-    df: pd.DataFrame,
-):
-
-    st.subheader(
-        TEXTS["kpis"][
-            "section_quick_wins"
-        ]
-    )
-
-    masks = (
-        MetricsService.quick_win_masks(
-            df
-        )
-    )
-
-    q1, q2, q3 = st.columns(3)
+def render_quick_wins_section(df: pd.DataFrame):
+    st.subheader(TEXTS["kpis"]["section_quick_wins"])
+    masks = MetricsService.quick_win_masks(df)
+    q1, q2, q3, q4 = st.columns(4)
 
     quick_wins = [
         (
@@ -233,6 +217,11 @@ def render_quick_wins_section(
             "small",
             "Vidéo(s) < 10 Mo",
         ),
+        (
+            q4,
+            "suspicious",
+            "Replay(s) suspect(s)",
+        )
     ]
 
     for column, key, label in quick_wins:
@@ -263,7 +252,6 @@ def render_quick_wins_section(
                 st.toast(
                     "Filtre appliqué !"
                 )
-
 
 def render_cleanup_section(
     df: pd.DataFrame,
@@ -318,7 +306,6 @@ def render_cleanup_section(
         f"{max(0, quota_gb - total_gb + reclaimable_gb):.2f} Go",
     )
 
-
 def render_top_videos_section(
     df: pd.DataFrame,
 ):
@@ -368,7 +355,6 @@ def render_top_videos_section(
         use_container_width=True,
         hide_index=True,
     )
-
 
 def render_host_section(
     df: pd.DataFrame,
@@ -439,36 +425,17 @@ def render_host_section(
             use_container_width=True,
         )
 
-
 def render_temporal_section(
     df: pd.DataFrame,
 ):
 
-    st.subheader(
-        "Temporalité"
-    )
+    render_temporal_section_title = "Temporalité"
+    days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
+    st.subheader(render_temporal_section_title)
     data = df.copy()
-
-    days = [
-        "Lundi",
-        "Mardi",
-        "Mercredi",
-        "Jeudi",
-        "Vendredi",
-        "Samedi",
-        "Dimanche",
-    ]
-
-    data["Jour"] = (
-        data["start_time"]
-        .dt.weekday
-        .map(dict(enumerate(days)))
-    )
-
-    data["size_gb"] = (
-        data["size_mb"] / 1024
-    )
+    data["Jour"] = (data["start_time"].dt.weekday.map(dict(enumerate(days))))
+    data["size_gb"] = (data["size_mb"] / 1024)
 
     stats = (
         data.groupby("Jour")
@@ -510,7 +477,6 @@ def render_temporal_section(
             fig,
             use_container_width=True,
         )
-
 
 def render_monthly_chart(
     df: pd.DataFrame,
@@ -592,7 +558,6 @@ def render_monthly_chart(
         fig,
         use_container_width=True,
     )
-
 
 def render_metrics_view(
     df: pd.DataFrame,

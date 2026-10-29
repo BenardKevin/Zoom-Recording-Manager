@@ -128,6 +128,17 @@ def _filter_and_sort_recordings(
             result["size_mb"] < 10
         ]
 
+    elif active_qw == "suspicious":
+        result = result[
+            (result["duration"] >= 30)
+            & (result["size_mb"] > 0)
+            & (
+                result["size_mb"]
+                / result["duration"]
+                <= 1
+            )
+        ]
+
     # Recherche
     if search_query:
 

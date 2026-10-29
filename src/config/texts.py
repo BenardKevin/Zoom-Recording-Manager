@@ -9,23 +9,23 @@ TEXTS = {
     ),
 
     "tabs": {
-        "metrics": "📊 Métriques",
-        "list": "🎥 Enregistrements",
+        "metrics": "Métriques",
+        "list": "Enregistrements",
     },
 
     "sidebar": {
-        "creds_header": "🔐 Identifiants Zoom",
+        "creds_header": "Identifiants Zoom",
 
         "client_id_label": "Zoom Client ID",
         "client_secret_label": "Zoom Client Secret",
 
-        "status_ok": "✅ Identifiants renseignés",
-        "status_missing": "⚠️ Identifiants manquants",
+        "status_ok": "Identifiants renseignés",
+        "status_missing": "Identifiants manquants",
 
-        "quota_header": "💾 Quota de stockage",
+        "quota_header": "Quota de stockage",
         "quota_label": "Quota Zoom (Go)",
 
-        "sync_header": "🔄 Synchronisation",
+        "sync_header": "Synchronisation",
         "sync_mode_label": "Mode de synchronisation",
 
         "sync_modes": [
@@ -42,7 +42,7 @@ TEXTS = {
 
         "date_input_label": "Date de début",
 
-        "btn_sync": "🔄 Synchroniser Zoom",
+        "btn_sync": "Synchroniser Zoom",
 
         "sync_success": (
             "Synchronisation terminée : {count} enregistrement(s) traité(s)."
@@ -80,7 +80,7 @@ TEXTS = {
 
         "count_caption": "{count} enregistrement(s)",
 
-        "btn_export_csv": "📥 Export CSV",
+        "btn_export_csv": "Export CSV",
     },
 
     "card": {
@@ -98,13 +98,13 @@ TEXTS = {
     },
 
     "kpis": {
-        "section_storage": "💾 Stockage",
-        "section_projection": "📈 Projection",
-        "section_activity": "📅 Activité",
-        "section_quick_wins": "⚡ Quick Wins",
-        "section_top": "🏆 Enregistrements les plus volumineux",
-        "section_chart": "📊 Évolution mensuelle",
-        "section_hosts": "👤 Répartition par animateur",
+        "section_storage": "Stockage",
+        "section_projection": "Projection",
+        "section_activity": "Activité",
+        "section_quick_wins": "Quick Wins",
+        "section_top": "Enregistrements les plus volumineux",
+        "section_chart": "Évolution mensuelle",
+        "section_hosts": "Répartition par animateur",
 
         "quota_used": "Quota utilisé",
         "quota_remaining": "Quota restant",

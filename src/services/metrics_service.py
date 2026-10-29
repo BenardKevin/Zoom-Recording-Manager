@@ -82,6 +82,9 @@ class MetricsService:
 
         now = datetime.now()
 
+        sus_mask = ((df["duration"] >= 30) & (df["size_mb"] > 0) & ((df["size_mb"] / df["duration"]) < 1))
+        
+
         return {
             "short": df["duration"] < 5,
 
@@ -91,6 +94,7 @@ class MetricsService:
             ),
 
             "small": df["size_mb"] < 10,
+            "suspicious": sus_mask,
         }
 
     @staticmethod
